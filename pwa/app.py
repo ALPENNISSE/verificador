@@ -67,6 +67,20 @@ def comparar(A, B):
     return len(ok), ok
 
 
+def leer_liviano(ruta, ancho=None):
+    """Lee la imagen sin cargar en memoria el tamaño completo (evita falta de RAM con fotos de 12-50 MP)."""
+    from PIL import Image
+    ancho = ancho or ANCHO
+    im = Image.open(ruta)
+    w, h = im.size
+    if w > ancho:
+        im.draft("RGB", (ancho, int(h * ancho / w)))   # JPEG: decodifica ya reducida
+    im = im.convert("RGB")
+    if im.size[0] > ancho:
+        im = im.resize((ancho, int(im.size[1] * ancho / im.size[0])), Image.LANCZOS)
+    return cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2BGR)
+
+
 def cargar_refs(oid):
     if oid in _cache:
         return _cache[oid]
@@ -76,9 +90,10 @@ def cargar_refs(oid):
     refs = {}
     for f in sorted(os.listdir(carpeta)):
         if f.lower().endswith(EXT):
-            img = cv2.imread(os.path.join(carpeta, f))
-            if img is not None:
-                refs[f] = analizar(img)
+            try:
+                refs[f] = analizar(leer_liviano(os.path.join(carpeta, f)))
+            except Exception as e:
+                print("No se pudo leer", f, e, flush=True)
     _cache[oid] = refs
     return refs
 
