@@ -1,4 +1,4 @@
-import os, re, base64
+import os, re, base64, time
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
@@ -13,7 +13,7 @@ RATIO = 0.8
 EXT = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 REF_DIR = os.path.join(os.path.dirname(__file__), "referencias")
 
-VERSION = "3"
+VERSION = "4"
 
 
 def ram_mb():
@@ -143,13 +143,15 @@ def info(oid: str):
 
 
 @app.post("/api/verificar")
-async def verificar(id: str = Form(...), foto: UploadFile = File(...)):
+def verificar(id: str = Form(...), foto: UploadFile = File(...)):
     if not valido(id):
         raise HTTPException(400, "ID inválido")
+    t0 = time.time()
+    print(f"verificar: inicio, RAM {ram_mb()} MB", flush=True)
     refs = cargar_refs(id)
     if not refs:
         raise HTTPException(404, "Objeto no encontrado")
-    datos = np.frombuffer(await foto.read(), np.uint8)
+    datos = np.frombuffer(foto.file.read(), np.uint8)
     img = cv2.imdecode(datos, cv2.IMREAD_COLOR)
     if img is None:
         raise HTTPException(400, "No se pudo leer la imagen")
@@ -168,6 +170,7 @@ async def verificar(id: str = Form(...), foto: UploadFile = File(...)):
         v = "no_coincide"
     else:
         v = "dudoso"
+    print(f"verificar: listo en {time.time()-t0:.1f} s, RAM {ram_mb()} MB, puntaje {mejor}", flush=True)
     imagen = None
     if mm:
         vis = cv2.drawMatches(F["img"], F["kp"], refs[mref]["img"], refs[mref]["kp"], mm[:120], None,
