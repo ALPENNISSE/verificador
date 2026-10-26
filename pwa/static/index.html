@@ -31,14 +31,26 @@ fetch("/api/objeto/"+encodeURIComponent(id)).then(r=>{if(!r.ok)throw 0;return r.
   $("refs").innerHTML=d.imagenes.map(u=>`<img src="${u}">`).join("");
 }).catch(()=>{$("estado").textContent="Objeto no encontrado: "+id});
 let file=null;
+// Reduce la foto en el celular antes de enviarla (más rápido y usa menos memoria del servidor)
+function reducir(f,max=1280){return new Promise((ok,ko)=>{
+  const img=new Image();img.onload=()=>{
+    const k=Math.min(1,max/img.width),c=document.createElement("canvas");
+    c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);
+    c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+    c.toBlob(b=>b?ok(b):ko(new Error("No se pudo procesar la foto")),"image/jpeg",0.92)};
+  img.onerror=()=>ko(new Error("No se pudo leer la foto (¿formato no compatible?)"));
+  img.src=URL.createObjectURL(f)})}
 $("f").onchange=e=>{file=e.target.files[0];if(!file)return;
   $("prev").src=URL.createObjectURL(file);$("prev").hidden=false;$("go").hidden=false;$("out").hidden=true};
 $("go").onclick=async()=>{
-  const fd=new FormData();fd.append("id",id);fd.append("foto",file);
-  $("go").disabled=true;$("go").textContent="Comparando…";
+  $("go").disabled=true;$("go").textContent="Comparando… (puede tardar hasta 1 minuto)";
   try{
+    const blob=await reducir(file);
+    const fd=new FormData();fd.append("id",id);fd.append("foto",blob,"foto.jpg");
     const r=await fetch("/api/verificar",{method:"POST",body:fd});
-    const d=await r.json();if(!r.ok)throw new Error(d.detail||"Error");
+    const txt=await r.text();let d;
+    try{d=JSON.parse(txt)}catch(_){throw new Error("El servidor respondió con error "+r.status+". Probablemente se está iniciando o le falta memoria: esperá 1 minuto y reintentá.")}
+    if(!r.ok)throw new Error(d.detail||"Error "+r.status);
     const t={coincide:"✅ Coincide con el original",dudoso:"⚠️ Dudoso: tomá otra foto",no_coincide:"❌ No coincide",mala_foto:"📷 "+(d.mensaje||"")}[d.veredicto];
     $("out").innerHTML=`<div class="res ${d.veredicto}">${t}</div>
       <p class="small">Puntos coincidentes: <b>${d.puntaje}</b>${d.referencia?" (ref: "+d.referencia+")":""}</p>
