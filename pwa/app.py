@@ -13,9 +13,22 @@ RATIO = 0.8
 EXT = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 REF_DIR = os.path.join(os.path.dirname(__file__), "referencias")
 
+VERSION = "3"
+
+
+def ram_mb():
+    try:
+        for l in open("/proc/self/status"):
+            if l.startswith("VmRSS"):
+                return int(l.split()[1]) // 1024
+    except Exception:
+        pass
+    return -1
+
+
 app = FastAPI()
-ANCHO = int(os.getenv("ANCHO", 1280))
-sift = cv2.SIFT_create(int(os.getenv("N_PUNTOS", 4000)))
+ANCHO = int(os.getenv("ANCHO", 1000))
+sift = cv2.SIFT_create(int(os.getenv("N_PUNTOS", 3000)))
 bf = cv2.BFMatcher()
 _cache = {}
 
@@ -68,17 +81,28 @@ def comparar(A, B):
 
 
 def leer_liviano(ruta, ancho=None):
-    """Lee la imagen sin cargar en memoria el tamaño completo (evita falta de RAM con fotos de 12-50 MP)."""
-    from PIL import Image
+    """Lee la imagen sin cargar en memoria el tamaño completo (evita falta de RAM con fotos grandes)."""
     ancho = ancho or ANCHO
+    try:
+        from PIL import Image
+    except ImportError:
+        img = cv2.imread(ruta, cv2.IMREAD_REDUCED_COLOR_4)      # respaldo: decodifica a 1/4
+        if img is None:
+            raise ValueError("no se pudo leer")
+        h, w = img.shape[:2]
+        return cv2.resize(img, (ancho, int(h * ancho / w)), interpolation=cv2.INTER_AREA) if w > ancho else img
+    Image.MAX_IMAGE_PIXELS = None
     im = Image.open(ruta)
     w, h = im.size
+    print(f"leyendo {os.path.basename(ruta)}: {w}x{h} px, RAM {ram_mb()} MB", flush=True)
     if w > ancho:
-        im.draft("RGB", (ancho, int(h * ancho / w)))   # JPEG: decodifica ya reducida
+        im.draft("RGB", (ancho, int(h * ancho / w)))
     im = im.convert("RGB")
     if im.size[0] > ancho:
         im = im.resize((ancho, int(im.size[1] * ancho / im.size[0])), Image.LANCZOS)
-    return cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2BGR)
+    out = cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2BGR)
+    im.close()
+    return out
 
 
 def cargar_refs(oid):
@@ -92,6 +116,7 @@ def cargar_refs(oid):
         if f.lower().endswith(EXT):
             try:
                 refs[f] = analizar(leer_liviano(os.path.join(carpeta, f)))
+                print(f"ok {f}: RAM {ram_mb()} MB", flush=True)
             except Exception as e:
                 print("No se pudo leer", f, e, flush=True)
     _cache[oid] = refs
@@ -100,6 +125,13 @@ def cargar_refs(oid):
 
 def valido(oid):
     return re.fullmatch(r"[A-Za-z0-9_-]{1,64}", oid) is not None
+
+
+@app.get("/api/estado")
+def estado():
+    return {"version": VERSION, "ram_mb": ram_mb(), "ancho": ANCHO,
+            "n_puntos": sift.getNFeatures() if hasattr(sift, "getNFeatures") else None,
+            "referencias_cargadas": {k: list(v) for k, v in _cache.items()}}
 
 
 @app.get("/api/objeto/{oid}")
@@ -151,7 +183,8 @@ def _calentar():
         if valido(d):
             try: cargar_refs(d)
             except Exception: pass
-threading.Thread(target=_calentar, daemon=True).start()  # precarga referencias al iniciar
+if os.getenv("WARMUP") == "1":
+    threading.Thread(target=_calentar, daemon=True).start()
 
 app.mount("/ref", StaticFiles(directory=REF_DIR), name="ref")
 
