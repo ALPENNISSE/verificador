@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verificador de objeto</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;padding:16px;max-width:560px;margin:auto;background:#f6f7f9;color:#111}
+h1{font-size:1.3rem}.card{background:#fff;border-radius:12px;padding:14px;margin:12px 0;box-shadow:0 1px 4px #0002}
+.refs{display:flex;gap:8px;overflow-x:auto}.refs img{height:90px;border-radius:8px}
+label.btn,button{display:block;text-align:center;background:#1a56db;color:#fff;padding:14px;border-radius:10px;font-size:1.05rem;border:0;width:100%}
+input[type=file]{display:none}#prev{width:100%;border-radius:8px;margin-top:10px}
+.res{font-size:1.2rem;font-weight:700;padding:14px;border-radius:10px;text-align:center}
+.coincide{background:#d1fae5;color:#065f46}.dudoso{background:#fef3c7;color:#92400e}
+.no_coincide,.mala_foto,.error{background:#fee2e2;color:#991b1b}
+.small{font-size:.85rem;color:#555}
+</style></head><body>
+<h1>Verificador de objeto</h1>
+<div class="card"><div id="estado">Cargando objeto…</div><div class="refs" id="refs"></div></div>
+<div class="card">
+<p class="small">Luz difusa, sin flash, cámara paralela a la superficie y bien enfocada.</p>
+<label class="btn" for="f">📷 Tomar foto del objeto</label>
+<input id="f" type="file" accept="image/*" capture="environment">
+<img id="prev" hidden>
+<button id="go" hidden style="margin-top:10px">Verificar</button>
+</div>
+<div class="card" id="out" hidden></div>
+<script>
+const id=new URLSearchParams(location.search).get("id")||"OBJETO1";
+const $=s=>document.getElementById(s);
+fetch("/api/objeto/"+encodeURIComponent(id)).then(r=>{if(!r.ok)throw 0;return r.json()}).then(d=>{
+  $("estado").textContent="Objeto: "+d.id+" — imágenes de referencia:";
+  $("refs").innerHTML=d.imagenes.map(u=>`<img src="${u}">`).join("");
+}).catch(()=>{$("estado").textContent="Objeto no encontrado: "+id});
+let file=null;
+$("f").onchange=e=>{file=e.target.files[0];if(!file)return;
+  $("prev").src=URL.createObjectURL(file);$("prev").hidden=false;$("go").hidden=false;$("out").hidden=true};
+$("go").onclick=async()=>{
+  const fd=new FormData();fd.append("id",id);fd.append("foto",file);
+  $("go").disabled=true;$("go").textContent="Comparando…";
+  try{
+    const r=await fetch("/api/verificar",{method:"POST",body:fd});
+    const d=await r.json();if(!r.ok)throw new Error(d.detail||"Error");
+    const t={coincide:"✅ Coincide con el original",dudoso:"⚠️ Dudoso: tomá otra foto",no_coincide:"❌ No coincide",mala_foto:"📷 "+(d.mensaje||"")}[d.veredicto];
+    $("out").innerHTML=`<div class="res ${d.veredicto}">${t}</div>
+      <p class="small">Puntos coincidentes: <b>${d.puntaje}</b>${d.referencia?" (ref: "+d.referencia+")":""}</p>
+      ${d.coincidencias?`<img style="width:100%" src="${d.coincidencias}">`:""}`;
+  }catch(e){$("out").innerHTML=`<div class="res error">${e.message}</div>`}
+  $("out").hidden=false;$("go").disabled=false;$("go").textContent="Verificar";
+};
+</script></body></html>
