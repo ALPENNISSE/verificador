@@ -130,6 +130,14 @@ async def verificar(id: str = Form(...), foto: UploadFile = File(...)):
     return {"veredicto": v, "puntaje": int(mejor), "referencia": mref, "coincidencias": imagen}
 
 
+import threading
+def _calentar():
+    for d in os.listdir(REF_DIR):
+        if valido(d):
+            try: cargar_refs(d)
+            except Exception: pass
+threading.Thread(target=_calentar, daemon=True).start()  # precarga referencias al iniciar
+
 app.mount("/ref", StaticFiles(directory=REF_DIR), name="ref")
 
 
