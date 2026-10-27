@@ -13,7 +13,7 @@ RATIO = 0.8
 EXT = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 REF_DIR = os.path.join(os.path.dirname(__file__), "referencias")
 
-VERSION = "4"
+VERSION = "5"
 
 
 def ram_mb():
@@ -27,16 +27,19 @@ def ram_mb():
 
 
 app = FastAPI()
-ANCHO = int(os.getenv("ANCHO", 1000))
+MAX_PX = int(os.getenv("MAX_PX", 900000))   # píxeles máximos para analizar (~1200x750)
+ANCHO = 1280
 sift = cv2.SIFT_create(int(os.getenv("N_PUNTOS", 3000)))
 bf = cv2.BFMatcher()
 _cache = {}
 
 
-def preparar(img, ancho=None):
-    ancho = ancho or ANCHO
+def preparar(img):
+    """Reduce la imagen a un máximo de MAX_PX píxeles. NUNCA la agranda (SIFT usa mucha memoria con imágenes grandes)."""
     h, w = img.shape[:2]
-    img = cv2.resize(img, (ancho, int(h * ancho / w)), interpolation=cv2.INTER_AREA)
+    k = min(1.0, (MAX_PX / (h * w)) ** 0.5)
+    if k < 1.0:
+        img = cv2.resize(img, (max(1, int(w * k)), max(1, int(h * k))), interpolation=cv2.INTER_AREA)
     m = img.reshape(-1, 3).mean(0)
     return np.clip(img * (m.mean() / (m + 1e-6)), 0, 255).astype(np.uint8)
 
@@ -80,26 +83,25 @@ def comparar(A, B):
     return len(ok), ok
 
 
-def leer_liviano(ruta, ancho=None):
+def leer_liviano(ruta):
     """Lee la imagen sin cargar en memoria el tamaño completo (evita falta de RAM con fotos grandes)."""
-    ancho = ancho or ANCHO
     try:
         from PIL import Image
     except ImportError:
         img = cv2.imread(ruta, cv2.IMREAD_REDUCED_COLOR_4)      # respaldo: decodifica a 1/4
         if img is None:
             raise ValueError("no se pudo leer")
-        h, w = img.shape[:2]
-        return cv2.resize(img, (ancho, int(h * ancho / w)), interpolation=cv2.INTER_AREA) if w > ancho else img
+        return img
     Image.MAX_IMAGE_PIXELS = None
     im = Image.open(ruta)
     w, h = im.size
     print(f"leyendo {os.path.basename(ruta)}: {w}x{h} px, RAM {ram_mb()} MB", flush=True)
-    if w > ancho:
-        im.draft("RGB", (ancho, int(h * ancho / w)))
+    k = min(1.0, (MAX_PX / (w * h)) ** 0.5)
+    if k < 1.0:
+        im.draft("RGB", (int(w * k), int(h * k)))
     im = im.convert("RGB")
-    if im.size[0] > ancho:
-        im = im.resize((ancho, int(im.size[1] * ancho / im.size[0])), Image.LANCZOS)
+    if k < 1.0 and im.size[0] * im.size[1] > MAX_PX:
+        im = im.resize((int(w * k), int(h * k)), Image.LANCZOS)
     out = cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2BGR)
     im.close()
     return out
@@ -129,7 +131,7 @@ def valido(oid):
 
 @app.get("/api/estado")
 def estado():
-    return {"version": VERSION, "ram_mb": ram_mb(), "ancho": ANCHO,
+    return {"version": VERSION, "ram_mb": ram_mb(), "max_px": MAX_PX,
             "n_puntos": sift.getNFeatures() if hasattr(sift, "getNFeatures") else None,
             "referencias_cargadas": {k: list(v) for k, v in _cache.items()}}
 
